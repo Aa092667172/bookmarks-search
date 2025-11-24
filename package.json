@@ -3,7 +3,7 @@
   "title": "Browser Bookmarks",
   "description": "Quickly search and open bookmarks from Google Chrome and Microsoft Edge. Supports multiple profiles and folder path visualization.",
   "icon": "command-icon.png",
-  "author": "ttaehee520",
+  "author": "KevinLin",
   "license": "MIT",
   "categories": [
     "Productivity",
