@@ -1,18 +1,20 @@
 {
   "name": "bookmarks-search",
-  "title": "Search Browser Bookmarks",
-  "description": "Search Windows Browser Bookmarks",
+  "title": "Browser Bookmarks",
+  "description": "Quickly search and open bookmarks from Google Chrome and Microsoft Edge. Supports multiple profiles and folder path visualization.",
   "icon": "command-icon.png",
-  "author": "KevinLin",
+  "author": "ttaehee520",
   "license": "MIT",
   "categories": [
-    "Productivity"
+    "Productivity",
+    "Web"
   ],
   "commands": [
     {
       "name": "index",
-      "title": "SearchBookmarks",
-      "description": "Search bookmarks for windows browser",
+      "title": "Search Bookmarks",
+      "subtitle": "Chrome & Edge",
+      "description": "Search and open bookmarks from your installed browsers",
       "mode": "view"
     }
   ],

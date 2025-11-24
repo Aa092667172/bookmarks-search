@@ -1,18 +1,28 @@
-import { ActionPanel, Action, List, showToast, Toast } from "@raycast/api";
+import { ActionPanel, Action, List, showToast, Toast, Icon } from "@raycast/api";
 import { useState, useEffect } from "react";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
 
-// 定義瀏覽器路徑設定
-const BROWSERS: Record<string, { name: string; paths: string[] }> = {
+// 1. Define browser configurations
+type BrowserType = "chrome" | "edge";
+
+interface BrowserConfig {
+    name: string;
+    macPathPrefix: string[];
+    winPathCandidates: string[][];
+}
+
+const BROWSERS: Record<BrowserType, BrowserConfig> = {
     chrome: {
         name: "Google Chrome",
-        paths: ["Google", "Chrome", "User Data", "Default", "Bookmarks"],
+        macPathPrefix: ["Google", "Chrome"],
+        winPathCandidates: [["Google", "Chrome", "User Data"]],
     },
     edge: {
         name: "Microsoft Edge",
-        paths: ["Microsoft", "Edge", "User Data", "Default", "Bookmarks"],
+        macPathPrefix: ["Microsoft Edge"],
+        winPathCandidates: [["Microsoft", "Edge", "User Data"]],
     },
 };
 
@@ -29,33 +39,80 @@ interface BookmarkItem {
     title: string;
     url: string;
     path: string;
+    source: string;
 }
+
+// Common profile names to check
+const PROFILES_TO_CHECK = ["Default", "Profile 1", "Profile 2", "Profile 3"];
 
 export default function Command() {
     const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [selectedBrowser, setSelectedBrowser] = useState<string>("chrome"); // 預設選 Chrome
+    const [selectedBrowser, setSelectedBrowser] = useState<BrowserType>("chrome");
+    const [error, setError] = useState<string | null>(null);
+    const [permissionIssue, setPermissionIssue] = useState(false);
 
     useEffect(() => {
         async function fetchBookmarks() {
             setIsLoading(true);
-            setBookmarks([]); // 切換時先清空列表
+            setError(null);
+            setPermissionIssue(false);
+            setBookmarks([]);
 
             try {
-                const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-
-                // 根據選擇的瀏覽器組合路徑
                 const browserConfig = BROWSERS[selectedBrowser];
-                const bookmarkPath = path.join(localAppData, ...browserConfig.paths);
+                const homeDir = os.homedir();
+                const isMac = process.platform === "darwin";
 
-                const data = await fs.readFile(bookmarkPath, "utf-8");
+                // Step 1: Prepare all possible base paths
+                const candidateBasePaths: string[] = [];
+
+                if (isMac) {
+                    candidateBasePaths.push(
+                        path.join(homeDir, "Library", "Application Support", ...browserConfig.macPathPrefix)
+                    );
+                } else {
+                    const localAppData = process.env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local");
+                    browserConfig.winPathCandidates.forEach((segments) => {
+                        candidateBasePaths.push(path.join(localAppData, ...segments));
+                    });
+                }
+
+                // Step 2: Search for the Bookmarks file
+                let foundPath = "";
+                let foundProfile = "";
+
+                outerLoop: for (const basePath of candidateBasePaths) {
+                    for (const profile of PROFILES_TO_CHECK) {
+                        const checkPath = path.join(basePath, profile, "Bookmarks");
+                        try {
+                            await fs.access(checkPath);
+                            foundPath = checkPath;
+                            foundProfile = profile;
+                            break outerLoop;
+                        } catch {
+                            // Continue searching if file is not found
+                        }
+                    }
+                }
+
+                if (!foundPath) {
+                    const osMsg = isMac ? "Full Disk Access permission" : "installation path";
+                    throw new Error(
+                        `Could not find ${browserConfig.name} bookmarks. Please check if the browser is installed or if Raycast has ${osMsg}.`
+                    );
+                }
+
+                // Step 3: Read and Parse
+                const data = await fs.readFile(foundPath, "utf-8");
                 const json = JSON.parse(data);
                 const items: BookmarkItem[] = [];
 
+                // Safely access roots
                 const roots = [
-                    json.roots.bookmark_bar,
-                    json.roots.other,
-                    json.roots.synced
+                    json.roots?.bookmark_bar,
+                    json.roots?.other,
+                    json.roots?.synced,
                 ].filter(Boolean);
 
                 const traverse = (node: BookmarkNode, folderPath: string) => {
@@ -64,30 +121,44 @@ export default function Command() {
                             id: node.id,
                             title: node.name,
                             url: node.url,
-                            path: folderPath
+                            path: folderPath,
+                            source: foundProfile,
                         });
                     } else if (node.children) {
-                        const newPath = folderPath ? `${folderPath} > ${node.name}` : node.name;
-                        node.children.forEach(child => traverse(child, newPath));
+                        const newPath = folderPath ? `${folderPath} / ${node.name}` : node.name;
+                        node.children.forEach((child) => traverse(child, newPath));
                     }
                 };
 
-                roots.forEach(root => traverse(root, ""));
+                roots.forEach((root) => traverse(root, ""));
                 setBookmarks(items);
-                setIsLoading(false);
-            } catch (error) {
-                console.error(error);
-                showToast({
-                    style: Toast.Style.Failure,
-                    title: "讀取失敗",
-                    message: `找不到 ${BROWSERS[selectedBrowser].name} 的書籤檔案`,
-                });
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : "Failed to read bookmarks";
+                console.error(msg);
+                setError(msg);
+
+                // Detect permission errors (Common on macOS)
+                if (
+                    msg.includes("EPERM") ||
+                    msg.includes("EACCES") ||
+                    msg.includes("Operation not permitted")
+                ) {
+                    setPermissionIssue(true);
+                    showToast({
+                        style: Toast.Style.Failure,
+                        title: "Permission Error",
+                        message: "Please grant Raycast 'Full Disk Access' in System Settings.",
+                    });
+                } else {
+                    showToast({ style: Toast.Style.Failure, title: "Error", message: msg });
+                }
+            } finally {
                 setIsLoading(false);
             }
         }
 
         fetchBookmarks();
-    }, [selectedBrowser]); // 當 selectedBrowser 改變時重新執行
+    }, [selectedBrowser]);
 
     return (
         <List
@@ -96,28 +167,52 @@ export default function Command() {
             searchBarAccessory={
                 <List.Dropdown
                     tooltip="Select Browser"
-                    storeValue={true} // 記住上次的選擇
-                    onChange={(newValue) => setSelectedBrowser(newValue)}
+                    onChange={(newValue) => setSelectedBrowser(newValue as BrowserType)}
+                    value={selectedBrowser}
                 >
-                    <List.Dropdown.Item title="Google Chrome" value="chrome" />
-                    <List.Dropdown.Item title="Microsoft Edge" value="edge" />
+                    <List.Dropdown.Item title="Google Chrome" value="chrome" icon={Icon.Globe} />
+                    <List.Dropdown.Item title="Microsoft Edge" value="edge" icon={Icon.Globe} />
                 </List.Dropdown>
             }
         >
-            {bookmarks.map((item) => (
-                <List.Item
-                    key={item.id}
-                    title={item.title}
-                    subtitle={item.url}
-                    accessories={[{ text: item.path }]}
-                    actions={
-                        <ActionPanel>
-                            <Action.OpenInBrowser url={item.url} />
-                            <Action.CopyToClipboard content={item.url} title="Copy URL" />
-                        </ActionPanel>
+            {error ? (
+                <List.EmptyView
+                    icon={Icon.Warning}
+                    title={permissionIssue ? "Permission Denied" : "Unable to read bookmarks"}
+                    description={
+                        permissionIssue
+                            ? "Go to System Settings -> Privacy & Security -> Full Disk Access -> Enable Raycast."
+                            : `${error}`
                     }
                 />
-            ))}
+            ) : bookmarks.length === 0 && !isLoading ? (
+                <List.EmptyView
+                    icon={Icon.Bookmark}
+                    title="No bookmarks found"
+                    description={`No bookmarks found in ${BROWSERS[selectedBrowser].name}.`}
+                />
+            ) : (
+                bookmarks.map((item) => (
+                    <List.Item
+                        key={`${item.source}-${item.id}`}
+                        icon={Icon.Globe}
+                        title={item.title}
+                        subtitle={item.url}
+                        accessories={[{ text: item.path, icon: Icon.Folder }]}
+                        actions={
+                            <ActionPanel>
+                                <Action.OpenInBrowser url={item.url} />
+                                <Action.CopyToClipboard content={item.url} title="Copy URL" />
+                                <Action.CopyToClipboard
+                                    content={item.title}
+                                    title="Copy Title"
+                                    shortcut={{ modifiers: ["cmd"], key: "." }}
+                                />
+                            </ActionPanel>
+                        }
+                    />
+                ))
+            )}
         </List>
     );
 }
