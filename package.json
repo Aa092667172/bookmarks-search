@@ -18,6 +18,21 @@
       "mode": "view"
     }
   ],
+  "preferences": [
+    {
+      "name": "defaultBrowser",
+      "type": "dropdown",
+      "required": false,
+      "title": "Default Browser",
+      "description": "Which browser's bookmarks to show by default",
+      "default": "all",
+      "data": [
+        { "title": "All Browsers", "value": "all" },
+        { "title": "Google Chrome", "value": "chrome" },
+        { "title": "Microsoft Edge", "value": "edge" }
+      ]
+    }
+  ],
   "dependencies": {
     "@raycast/api": "^1.79.0",
     "@raycast/utils": "^1.16.1"
