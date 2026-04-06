@@ -5,7 +5,6 @@ import {
   showToast,
   Toast,
   Icon,
-  getPreferenceValues,
 } from "@raycast/api";
 import { useState, useEffect, useMemo } from "react";
 import fs from "fs/promises";
@@ -13,10 +12,6 @@ import path from "path";
 import os from "os";
 
 type BrowserType = "chrome" | "edge";
-
-interface Preferences {
-  defaultBrowser: BrowserType;
-}
 
 interface BrowserConfig {
   name: string;
@@ -137,14 +132,38 @@ async function loadBrowserBookmarks(browserType: BrowserType): Promise<BookmarkI
   return allItems;
 }
 
+const PREFS_FILE = path.join(os.homedir(), ".raycast-bookmarks-prefs.json");
+
+function readSavedBrowser(): string {
+  try {
+    const data = require("fs").readFileSync(PREFS_FILE, "utf-8");
+    return JSON.parse(data).defaultBrowser || "all";
+  } catch {
+    return "all";
+  }
+}
+
+function saveBrowser(value: string) {
+  try {
+    require("fs").writeFileSync(PREFS_FILE, JSON.stringify({ defaultBrowser: value }));
+  } catch {
+    // ignore
+  }
+}
+
 export default function Command() {
-  const preferences = getPreferenceValues<Preferences>();
+  const savedBrowser = readSavedBrowser();
   const [allBookmarks, setAllBookmarks] = useState<BookmarkItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [filter, setFilter] = useState<string>("all");
+  const [filter, setFilter] = useState<string>(savedBrowser);
   const [error, setError] = useState<string | null>(null);
   const [permissionIssue, setPermissionIssue] = useState(false);
-  const [availableBrowsers, setAvailableBrowsers] = useState<BrowserType[]>([]);
+  const [availableBrowsers, setAvailableBrowsers] = useState<BrowserType[] | null>(null);
+
+  function onFilterChange(value: string) {
+    setFilter(value);
+    saveBrowser(value);
+  }
 
   useEffect(() => {
     async function fetchAll() {
@@ -175,15 +194,7 @@ export default function Command() {
       }
 
       setAllBookmarks(allItems);
-      setAvailableBrowsers(found);
-
-      // Auto-select preferred browser if available, otherwise show all
-      if (found.length === 1) {
-        setFilter(found[0]);
-      } else if (preferences.defaultBrowser && found.includes(preferences.defaultBrowser)) {
-        setFilter(preferences.defaultBrowser);
-      }
-
+      setAvailableBrowsers(found); // triggers Dropdown to render
       setIsLoading(false);
     }
 
@@ -212,19 +223,21 @@ export default function Command() {
       isLoading={isLoading}
       searchBarPlaceholder="Search bookmarks..."
       searchBarAccessory={
-        <List.Dropdown tooltip="Filter Browser" onChange={setFilter} value={filter}>
-          <List.Dropdown.Item title="All Browsers" value="all" icon={Icon.Globe} />
-          <List.Dropdown.Section>
-            {availableBrowsers.map((key) => (
-              <List.Dropdown.Item
-                key={key}
-                title={BROWSERS[key].name}
-                value={key}
-                icon={BROWSERS[key].icon}
-              />
-            ))}
-          </List.Dropdown.Section>
-        </List.Dropdown>
+        availableBrowsers !== null ? (
+          <List.Dropdown tooltip="Filter Browser" onChange={onFilterChange} value={filter}>
+            <List.Dropdown.Item title="All Browsers" value="all" icon={Icon.Globe} />
+            <List.Dropdown.Section>
+              {availableBrowsers.map((key) => (
+                <List.Dropdown.Item
+                  key={key}
+                  title={BROWSERS[key].name}
+                  value={key}
+                  icon={BROWSERS[key].icon}
+                />
+              ))}
+            </List.Dropdown.Section>
+          </List.Dropdown>
+        ) : undefined
       }
     >
       {error && !isLoading ? (
